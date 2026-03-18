@@ -5,14 +5,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import re
-import math
-import nltk
 import warnings
 warnings.filterwarnings("ignore")
 
+import nltk
+nltk.download("punkt", quiet=True)
+nltk.download("punkt_tab", quiet=True)
+
 from collections import Counter
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
-from rouge_score import rouge_scorer
+from rouge_score import rouge_scorer as rouge_lib
 from datasets import Dataset
 from ragas import evaluate
 from ragas.metrics import (
@@ -28,129 +30,19 @@ from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from rag_pipeline import build_rag_pipeline, run_rag
 
-nltk.download("punkt", quiet=True)
-nltk.download("punkt_tab", quiet=True)
-
-# ── Big test dataset (20 questions) ──────────────────────────────────────────
-TEST_DATA = [
-    {"question": "When was Albert Einstein born?",
-     "ground_truth": "Albert Einstein was born on March 14, 1879."},
-    {"question": "Where was Einstein born?",
-     "ground_truth": "Einstein was born in Ulm, in the Kingdom of Württemberg in the German Empire."},
-    {"question": "What is Einstein's famous equation?",
-     "ground_truth": "Einstein's famous equation is E = mc², the mass–energy equivalence formula."},
-    {"question": "What prize did Einstein win and for what?",
-     "ground_truth": "Einstein received the Nobel Prize in Physics in 1921 for the photoelectric effect."},
-    {"question": "When did Einstein move to the United States?",
-     "ground_truth": "Einstein moved to the United States in 1933 when Hitler came to power."},
-    {"question": "Where did Einstein work in the United States?",
-     "ground_truth": "Einstein worked at the Institute for Advanced Study in Princeton, New Jersey."},
-    {"question": "When did Einstein die?",
-     "ground_truth": "Einstein died on April 18, 1955, in Princeton, New Jersey, at the age of 76."},
-    {"question": "How many scientific papers did Einstein publish?",
-     "ground_truth": "Einstein published more than 300 scientific papers."},
-    {"question": "What is the photoelectric effect?",
-     "ground_truth": "The photoelectric effect explains how light can eject electrons from a metal surface."},
-    {"question": "What is the Annus Mirabilis?",
-     "ground_truth": "Annus Mirabilis refers to 1905, when Einstein published four groundbreaking papers."},
-    {"question": "Who was Einstein's first wife?",
-     "ground_truth": "Einstein's first wife was Mileva Marić, whom he married in 1903."},
-    {"question": "Was Einstein offered any political position?",
-     "ground_truth": "Einstein was offered the presidency of Israel in 1952, which he declined."},
-    {"question": "What did Einstein predict about light near massive objects?",
-     "ground_truth": "Einstein's general theory of relativity predicted the bending of light around massive objects."},
-    {"question": "What are gravitational waves?",
-     "ground_truth": "Gravitational waves were predicted by Einstein's general relativity and first detected in 2015 by LIGO."},
-    {"question": "What instrument did Einstein play?",
-     "ground_truth": "Einstein played the violin and loved the works of Mozart and Bach."},
-    {"question": "What is an Einstein ring?",
-     "ground_truth": "An Einstein ring is an optical phenomenon caused by gravitational lensing of light from a distant source."},
-    {"question": "What is spacetime?",
-     "ground_truth": "Einstein's special theory of relativity introduced the concept that space and time are interwoven into spacetime."},
-    {"question": "Who did Einstein collaborate with?",
-     "ground_truth": "Einstein collaborated with physicists including Niels Bohr, Max Planck, and Werner Heisenberg."},
-    {"question": "Why did Einstein sign a letter to President Roosevelt?",
-     "ground_truth": "Einstein signed the letter urging nuclear research, fearing Nazi Germany would develop nuclear weapons first."},
-    {"question": "What happened to Einstein's brain after death?",
-     "ground_truth": "Einstein's brain was preserved after death and has been the subject of several studies."},
-]
-
-# ── Build RAG pipeline ────────────────────────────────────────────────────────
-print("🔧 Building RAG pipeline...")
-llm, retriever = build_rag_pipeline("documents/sample.txt")
-
-# ── Run RAG on all questions ──────────────────────────────────────────────────
-print("🤖 Running RAG on 20 questions...\n")
-questions, answers, contexts_list, ground_truths = [], [], [], []
-
-for item in TEST_DATA:
-    q, gt = item["question"], item["ground_truth"]
-    answer, contexts = run_rag(llm, retriever, q)
-    questions.append(q)
-    answers.append(answer)
-    contexts_list.append(contexts)
-    ground_truths.append(gt)
-    print(f"Q: {q}")
-    print(f"A: {answer}")
-    print("-" * 60)
-
-# ── Build RAGAs dataset ───────────────────────────────────────────────────────
-eval_dataset = Dataset.from_dict({
-    "question":     questions,
-    "answer":       answers,
-    "contexts":     contexts_list,
-    "ground_truth": ground_truths,
-})
-
-# ── Configure Groq + HuggingFace ─────────────────────────────────────────────
-print("\n⚙️  Configuring RAGAs with Groq + HuggingFace...")
-
-ragas_llm = LangchainLLMWrapper(ChatGroq(
-    model="llama-3.3-70b-versatile",
-    temperature=0,
-    api_key=os.getenv("GROQ_API_KEY")
-))
-
-hf_embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
-ragas_embeddings = LangchainEmbeddingsWrapper(hf_embeddings)
-
-faithfulness.llm            = ragas_llm
-answer_relevancy.llm        = ragas_llm
-answer_relevancy.embeddings = ragas_embeddings
-context_precision.llm       = ragas_llm
-context_recall.llm          = ragas_llm
-answer_correctness.llm      = ragas_llm
-
-# ── RAGAs Evaluation ──────────────────────────────────────────────────────────
-print("\n📊 Running RAGAs evaluation...\n")
-results = evaluate(
-    dataset=eval_dataset,
-    metrics=[faithfulness, answer_relevancy, context_precision,
-             context_recall, answer_correctness],
-    llm=ragas_llm,
-    embeddings=ragas_embeddings,
-)
-df = results.to_pandas()
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CUSTOM METRICS
-# ══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
+# HELPER FUNCTIONS
+# ══════════════════════════════════════════════════════════════════
 
 def normalize(text: str) -> str:
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s]", "", text)
-    return text
+    return re.sub(r"[^\w\s]", "", text.lower().strip())
 
 def tokenize(text: str) -> list:
     return normalize(text).split()
 
-# 1. Exact Match ───────────────────────────────────────────────────────────────
 def exact_match(prediction: str, ground_truth: str) -> float:
     return float(normalize(prediction) == normalize(ground_truth))
 
-# 2. F1 Score ──────────────────────────────────────────────────────────────────
 def f1_score(prediction: str, ground_truth: str) -> float:
     pred_tokens = tokenize(prediction)
     gt_tokens   = tokenize(ground_truth)
@@ -162,16 +54,28 @@ def f1_score(prediction: str, ground_truth: str) -> float:
     recall    = num_common / len(gt_tokens)
     return 2 * precision * recall / (precision + recall)
 
-# 3. BLEU Score ────────────────────────────────────────────────────────────────
+def precision_score(prediction: str, ground_truth: str) -> float:
+    pred_tokens = tokenize(prediction)
+    gt_tokens   = tokenize(ground_truth)
+    common      = Counter(pred_tokens) & Counter(gt_tokens)
+    num_common  = sum(common.values())
+    return num_common / len(pred_tokens) if pred_tokens else 0.0
+
+def recall_score(prediction: str, ground_truth: str) -> float:
+    pred_tokens = tokenize(prediction)
+    gt_tokens   = tokenize(ground_truth)
+    common      = Counter(pred_tokens) & Counter(gt_tokens)
+    num_common  = sum(common.values())
+    return num_common / len(gt_tokens) if gt_tokens else 0.0
+
 def bleu_score(prediction: str, ground_truth: str) -> float:
     pred_tokens = tokenize(prediction)
     gt_tokens   = tokenize(ground_truth)
     smoothie    = SmoothingFunction().method4
     return sentence_bleu([gt_tokens], pred_tokens, smoothing_function=smoothie)
 
-# 4. ROUGE Score ───────────────────────────────────────────────────────────────
 def rouge_scores(prediction: str, ground_truth: str) -> dict:
-    scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=True)
+    scorer = rouge_lib.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=True)
     scores = scorer.score(ground_truth, prediction)
     return {
         "rouge1": scores["rouge1"].fmeasure,
@@ -179,120 +83,225 @@ def rouge_scores(prediction: str, ground_truth: str) -> dict:
         "rougeL": scores["rougeL"].fmeasure,
     }
 
-# 5. Exact Match in Context (for Hit Rate & MRR) ───────────────────────────────
-def answer_in_context(ground_truth: str, contexts: list) -> list:
-    """Returns list of bools — True if ground truth keywords found in that chunk."""
+def hit_rate(ground_truth: str, contexts: list) -> float:
     gt_tokens = set(tokenize(ground_truth))
-    hits = []
     for ctx in contexts:
         ctx_tokens = set(tokenize(ctx))
         overlap = len(gt_tokens & ctx_tokens) / max(len(gt_tokens), 1)
-        hits.append(overlap >= 0.3)   # 30% keyword overlap = hit
-    return hits
+        if overlap >= 0.3:
+            return 1.0
+    return 0.0
 
-# 6. Hit Rate ──────────────────────────────────────────────────────────────────
-def hit_rate(ground_truth: str, contexts: list) -> float:
-    hits = answer_in_context(ground_truth, contexts)
-    return float(any(hits))
-
-# 7. Mean Reciprocal Rank (MRR) ───────────────────────────────────────────────
 def reciprocal_rank(ground_truth: str, contexts: list) -> float:
-    hits = answer_in_context(ground_truth, contexts)
-    for i, hit in enumerate(hits):
-        if hit:
+    gt_tokens = set(tokenize(ground_truth))
+    for i, ctx in enumerate(contexts):
+        ctx_tokens = set(tokenize(ctx))
+        overlap = len(gt_tokens & ctx_tokens) / max(len(gt_tokens), 1)
+        if overlap >= 0.3:
             return 1.0 / (i + 1)
     return 0.0
 
-# 8. Groundedness ─────────────────────────────────────────────────────────────
 def groundedness(answer: str, contexts: list) -> float:
-    """What fraction of answer tokens appear in the retrieved context."""
     combined_ctx  = " ".join(contexts)
     answer_tokens = set(tokenize(answer))
     ctx_tokens    = set(tokenize(combined_ctx))
     if not answer_tokens:
         return 0.0
-    overlap = len(answer_tokens & ctx_tokens)
-    return overlap / len(answer_tokens)
+    return len(answer_tokens & ctx_tokens) / len(answer_tokens)
 
-# ── Compute all custom metrics ────────────────────────────────────────────────
-print("🔢 Computing custom metrics (F1, BLEU, ROUGE, MRR, Hit Rate, Exact Match, Groundedness)...\n")
+def score_bar(score: float) -> str:
+    filled = int(score * 20)
+    return "█" * filled + "░" * (20 - filled)
 
-em_scores, f1_scores, bleu_scores       = [], [], []
-rouge1_scores, rouge2_scores, rougeL_scores = [], [], []
-hit_scores, mrr_scores, ground_scores   = [], [], []
+def status_icon(score: float) -> str:
+    if score >= 0.7: return "✅"
+    if score >= 0.5: return "⚠️ "
+    return "❌"
 
-for ans, gt, ctxs in zip(answers, ground_truths, contexts_list):
-    em_scores.append(exact_match(ans, gt))
-    f1_scores.append(f1_score(ans, gt))
-    bleu_scores.append(bleu_score(ans, gt))
-    rouge = rouge_scores(ans, gt)
-    rouge1_scores.append(rouge["rouge1"])
-    rouge2_scores.append(rouge["rouge2"])
-    rougeL_scores.append(rouge["rougeL"])
-    hit_scores.append(hit_rate(gt, ctxs))
-    mrr_scores.append(reciprocal_rank(gt, ctxs))
-    ground_scores.append(groundedness(ans, ctxs))
+def print_section(title: str):
+    print("\n" + "═" * 65)
+    print(f"  {title}")
+    print("═" * 65)
 
-# ── Add custom metrics to dataframe ──────────────────────────────────────────
-df["exact_match"]   = em_scores
-df["f1_score"]      = f1_scores
-df["bleu_score"]    = bleu_scores
-df["rouge1"]        = rouge1_scores
-df["rouge2"]        = rouge2_scores
-df["rougeL"]        = rougeL_scores
-df["hit_rate"]      = hit_scores
-df["mrr"]           = mrr_scores
-df["groundedness"]  = ground_scores
+# ══════════════════════════════════════════════════════════════════
+# SETUP — runs once at startup
+# ══════════════════════════════════════════════════════════════════
 
-# ══════════════════════════════════════════════════════════════════════════════
-# FINAL REPORT
-# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "═" * 65)
+print("       RAG INTERACTIVE EVALUATOR")
+print("═" * 65)
 
-print("\n" + "=" * 70)
-print("            FULL RAG EVALUATION REPORT — 12 METRICS")
-print("=" * 70)
+print("\n🔧 Building RAG pipeline...")
+llm, retriever = build_rag_pipeline("documents/sample.txt")
 
-all_metrics = {
-    # RAGAs metrics
-    "faithfulness":       ("Faithfulness",       "RAGAs  ", "No hallucination?          "),
-    "answer_relevancy":   ("Answer Relevancy",   "RAGAs  ", "Answer on-topic?           "),
-    "context_precision":  ("Context Precision",  "RAGAs  ", "Retrieved chunks relevant? "),
-    "context_recall":     ("Context Recall",     "RAGAs  ", "Context covers truth?      "),
-    "answer_correctness": ("Answer Correctness", "RAGAs  ", "Factually correct?         "),
-    # Custom metrics
-    "faithfulness":       ("Faithfulness",       "RAGAs  ", "No hallucination?          "),
-    "exact_match":        ("Exact Match",        "Custom ", "Exact string match?        "),
-    "f1_score":           ("F1 Score",           "Custom ", "Precision + recall balance?"),
-    "bleu_score":         ("BLEU Score",         "Custom ", "N-gram overlap with truth? "),
-    "rouge1":             ("ROUGE-1",            "Custom ", "Unigram overlap?           "),
-    "rouge2":             ("ROUGE-2",            "Custom ", "Bigram overlap?            "),
-    "rougeL":             ("ROUGE-L",            "Custom ", "Longest common subsequence?"),
-    "hit_rate":           ("Hit Rate",           "Custom ", "Truth found in context?    "),
-    "mrr":                ("MRR",                "Custom ", "Rank of first correct ctx? "),
-    "groundedness":       ("Groundedness",       "Custom ", "Answer grounded in context?"),
-}
+print("⚙️  Setting up RAGAs evaluator...")
 
-print(f"\n{'Metric':<22} {'Type':<9} {'Description':<32} {'Score':>6}  {'Bar'}")
-print("-" * 70)
+ragas_llm = LangchainLLMWrapper(ChatGroq(
+    model="llama-3.3-70b-versatile",
+    temperature=0,
+    api_key=os.getenv("GROQ_API_KEY")
+))
 
-for col, (name, mtype, desc) in all_metrics.items():
-    if col in df.columns:
-        score  = df[col].mean()
-        bar    = "█" * int(score * 20) + "░" * (20 - int(score * 20))
-        status = "✅" if score >= 0.7 else "⚠️ " if score >= 0.5 else "❌"
-        print(f"{status} {name:<22} {mtype:<9} {desc:<32} {score:.3f}  [{bar}]")
+hf_embeddings    = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+ragas_embeddings = LangchainEmbeddingsWrapper(hf_embeddings)
 
-print("=" * 70)
+faithfulness.llm            = ragas_llm
+answer_relevancy.llm        = ragas_llm
+answer_relevancy.embeddings = ragas_embeddings
+context_precision.llm       = ragas_llm
+context_recall.llm          = ragas_llm
+answer_correctness.llm      = ragas_llm
 
-# ── Per-question breakdown ────────────────────────────────────────────────────
-print("\n📁 Per-question scores:")
-report_cols = ["question", "faithfulness", "f1_score", "bleu_score",
-               "rouge1", "rougeL", "hit_rate", "mrr",
-               "groundedness", "exact_match"]
-available = [c for c in report_cols if c in df.columns]
-print(df[available].to_string())
+print("✅ Ready! Type your question below.\n")
 
-# ── Save to CSV ───────────────────────────────────────────────────────────────
-df.to_csv("rag_eval_results.csv", index=False)
-print("\n💾 Full results saved to rag_eval_results.csv")
-print("✅ Evaluation complete!")
+# ══════════════════════════════════════════════════════════════════
+# MAIN INTERACTIVE LOOP
+# ══════════════════════════════════════════════════════════════════
+
+while True:
+    print("\n" + "─" * 65)
+    question = input("❓ Enter your question (or 'quit' to exit): ").strip()
+
+    if question.lower() in ("quit", "exit", "q"):
+        print("\n👋 Goodbye!\n")
+        break
+
+    if not question:
+        print("⚠️  Please enter a question.")
+        continue
+
+    ground_truth = input("📝 Enter the ground truth answer (for evaluation): ").strip()
+
+    if not ground_truth:
+        print("⚠️  Ground truth is needed to compute metrics. Please try again.")
+        continue
+
+    # ── Step 1: Run RAG ───────────────────────────────────────────
+    print("\n🤖 Running RAG pipeline...")
+    answer, contexts = run_rag(llm, retriever, question)
+
+    # ── Step 2: Show Question + Answer ───────────────────────────
+    print_section("QUESTION & ANSWER")
+    print(f"  Question : {question}")
+    print(f"  Answer   : {answer}")
+    print(f"  Truth    : {ground_truth}")
+
+    # ── Step 3: Show Retrieved Chunks ────────────────────────────
+    print_section(f"RETRIEVED CHUNKS ({len(contexts)} total)")
+    for i, chunk in enumerate(contexts, 1):
+        print(f"\n  📄 Chunk {i}:")
+        print(f"  {chunk.strip()}")
+
+        # Per-chunk stats vs ground truth
+        gt_tokens  = set(tokenize(ground_truth))
+        ctx_tokens = set(tokenize(chunk))
+        overlap    = len(gt_tokens & ctx_tokens)
+        coverage   = overlap / max(len(gt_tokens), 1)
+        relevance  = overlap / max(len(ctx_tokens), 1)
+
+        print(f"\n  📊 Chunk {i} Metrics (vs ground truth):")
+        print(f"     Token overlap count : {overlap}")
+        print(f"     Coverage (recall)   : {coverage:.3f}  [{score_bar(coverage)}]")
+        print(f"     Relevance (prec)    : {relevance:.3f}  [{score_bar(relevance)}]")
+        print(f"     Hit (≥30% overlap)  : {'✅ YES' if coverage >= 0.3 else '❌ NO'}")
+
+    # ── Step 4: Answer-level Custom Metrics ──────────────────────
+    print_section("ANSWER QUALITY METRICS (answer vs ground truth)")
+
+    em   = exact_match(answer, ground_truth)
+    f1   = f1_score(answer, ground_truth)
+    prec = precision_score(answer, ground_truth)
+    rec  = recall_score(answer, ground_truth)
+    bleu = bleu_score(answer, ground_truth)
+    rouge = rouge_scores(answer, ground_truth)
+    grnd = groundedness(answer, contexts)
+    hr   = hit_rate(ground_truth, contexts)
+    mrr  = reciprocal_rank(ground_truth, contexts)
+
+    print(f"\n  {status_icon(em)}   Exact Match   : {em:.3f}  [{score_bar(em)}]")
+    print(       f"       (1.0 = answer exactly matches ground truth)")
+
+    print(f"\n  {status_icon(prec)} Precision      : {prec:.3f}  [{score_bar(prec)}]")
+    print(       f"       (of words in answer, how many are in ground truth?)")
+
+    print(f"\n  {status_icon(rec)}  Recall         : {rec:.3f}  [{score_bar(rec)}]")
+    print(       f"       (of words in ground truth, how many appear in answer?)")
+
+    print(f"\n  {status_icon(f1)}  F1 Score       : {f1:.3f}  [{score_bar(f1)}]")
+    print(       f"       (harmonic mean of precision and recall)")
+
+    print(f"\n  {status_icon(bleu)} BLEU Score     : {bleu:.3f}  [{score_bar(bleu)}]")
+    print(       f"       (n-gram overlap between answer and ground truth)")
+
+    print(f"\n  {status_icon(rouge['rouge1'])} ROUGE-1        : {rouge['rouge1']:.3f}  [{score_bar(rouge['rouge1'])}]")
+    print(       f"       (unigram overlap)")
+
+    print(f"\n  {status_icon(rouge['rouge2'])} ROUGE-2        : {rouge['rouge2']:.3f}  [{score_bar(rouge['rouge2'])}]")
+    print(       f"       (bigram overlap)")
+
+    print(f"\n  {status_icon(rouge['rougeL'])} ROUGE-L        : {rouge['rougeL']:.3f}  [{score_bar(rouge['rougeL'])}]")
+    print(       f"       (longest common subsequence)")
+
+    # ── Step 5: Retrieval Metrics ─────────────────────────────────
+    print_section("RETRIEVAL METRICS (context vs ground truth)")
+
+    print(f"\n  {status_icon(hr)}  Hit Rate       : {hr:.3f}  [{score_bar(hr)}]")
+    print(       f"       (was the answer found in any retrieved chunk?)")
+
+    print(f"\n  {status_icon(mrr)} MRR            : {mrr:.3f}  [{score_bar(mrr)}]")
+    print(       f"       (1/rank of first chunk containing the answer)")
+
+    print(f"\n  {status_icon(grnd)} Groundedness   : {grnd:.3f}  [{score_bar(grnd)}]")
+    print(       f"       (how much of the answer is supported by context?)")
+
+    # ── Step 6: RAGAs Metrics ─────────────────────────────────────
+    print_section("RAGAs METRICS (LLM-based deep evaluation)")
+    print("  ⏳ Running RAGAs evaluation (this takes ~20-30 seconds)...")
+
+    eval_dataset = Dataset.from_dict({
+        "question":     [question],
+        "answer":       [answer],
+        "contexts":     [contexts],
+        "ground_truth": [ground_truth],
+    })
+
+    try:
+        ragas_results = evaluate(
+            dataset=eval_dataset,
+            metrics=[faithfulness, answer_relevancy, context_precision,
+                     context_recall, answer_correctness],
+            llm=ragas_llm,
+            embeddings=ragas_embeddings,
+        )
+        ragas_df = ragas_results.to_pandas()
+
+        ragas_metric_info = {
+            "faithfulness":       ("Faithfulness",       "answer not hallucinated?          "),
+            "answer_relevancy":   ("Answer Relevancy",   "answer addresses the question?    "),
+            "context_precision":  ("Context Precision",  "retrieved chunks are relevant?    "),
+            "context_recall":     ("Context Recall",     "context covers ground truth?      "),
+            "answer_correctness": ("Answer Correctness", "answer factually matches truth?   "),
+        }
+
+        print()
+        for col, (name, desc) in ragas_metric_info.items():
+            if col in ragas_df.columns:
+                score = ragas_df[col].iloc[0]
+                if score is not None and str(score) != "nan":
+                    score = float(score)
+                    print(f"  {status_icon(score)} {name:<22} : {score:.3f}  [{score_bar(score)}]")
+                    print(f"       ({desc})")
+                    print()
+
+    except Exception as e:
+        print(f"  ⚠️  RAGAs evaluation failed: {e}")
+
+    # ── Step 7: Summary ───────────────────────────────────────────
+    print_section("QUICK SUMMARY")
+    print(f"  Question    : {question}")
+    print(f"  Answer      : {answer}")
+    print(f"  F1={f1:.2f}  BLEU={bleu:.2f}  ROUGE-L={rouge['rougeL']:.2f}  "
+          f"Hit={hr:.2f}  MRR={mrr:.2f}  Grounded={grnd:.2f}")
+
+    print("\n  ✅ Evaluation complete for this question!")
+    print("  💡 Ask another question or type 'quit' to exit.")
